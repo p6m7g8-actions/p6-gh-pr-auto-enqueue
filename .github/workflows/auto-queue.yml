@@ -13,5 +13,9 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5.0.0
       - name: Enqueue PR
-        uses: p6m7g8-actions/p6-gh-pr-auto-enqueue@main
+        uses: ./
+        with:
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
