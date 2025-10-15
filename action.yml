@@ -5,7 +5,7 @@ author: "Philip M. Gollucci"
 inputs:
   gh_token:
     description: "GitHub Token with repo permissions"
-    required: false
+    required: true
 
 runs:
   using: "composite"
@@ -20,19 +20,10 @@ runs:
         PR=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
         echo "pr=$PR" >> "$GITHUB_OUTPUT"
 
-    - name: Set default GH token
-      shell: bash
-      run: |
-        GH_TOKEN="${{ inputs.gh_token }}"
-        if [ -z "$GH_TOKEN" ]; then
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-        fi
-        echo "GH_TOKEN=$GH_TOKEN" >> "$GITHUB_ENV"
-
     - name: Enqueue the single PR into default Merge Queue
       if: steps.pr.outputs.pr != ''
       env:
-        GH_TOKEN: ${{ env.GH_TOKEN }}
+        GH_TOKEN: ${{ inputs.gh_token }}
         REPO: ${{ github.repository }}
         PR: ${{ steps.pr.outputs.pr }}
       shell: bash
