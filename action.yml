@@ -14,14 +14,18 @@ runs:
       id: pr
       if: >
         github.event.workflow_run.event == 'pull_request' &&
-        github.event.workflow_run.conclusion == 'success'
+        github.event.workflow_run.conclusion == 'success' &&
+        !startsWith(github.repository, 'pgollucci/')
       shell: bash
       run: |
         PR=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
+        echo "pr=$PR"
         echo "pr=$PR" >> "$GITHUB_OUTPUT"
 
     - name: Enqueue the single PR into default Merge Queue
-      if: steps.pr.outputs.pr != ''
+      if: >
+        steps.pr.outputs.pr != '' &&
+        !startsWith(github.repository, 'pgollucci/')
       env:
         GH_TOKEN: ${{ inputs.gh_token }}
         REPO: ${{ github.repository }}
@@ -29,6 +33,4 @@ runs:
       shell: bash
       run: |
         echo "Queueing PR #$PR in $REPO"
-        # No strategy flag: for branches with Merge Queue enabled,
-        # this adds the PR to the queue (or enables auto-merge if checks still pending).
         gh pr merge -R "$REPO" "$PR"
