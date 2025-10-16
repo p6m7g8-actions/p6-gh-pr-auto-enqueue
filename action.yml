@@ -32,6 +32,6 @@ runs:
       run: |
         echo "Queueing PR #$PR in $REPO"
         case $REPO in
-        pgollucci/) gh pr merge --merge -R "$REPO" "$PR" ;;
-        *) gh pr merge -R "$REPO" "$PR" ;;
-        
+          pgollucci/) gh pr merge --merge -R "$REPO" "$PR" ;;
+          *) gh pr merge -R "$REPO" "$PR" ;;
+        esac
