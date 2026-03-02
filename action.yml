@@ -23,7 +23,7 @@ runs:
 
     - name: Enqueue the single PR into default Merge Queue
       if: >
-        steps.pr.outputs.pr != '' 
+        steps.pr.outputs.pr != ''
       env:
         GH_TOKEN: ${{ inputs.gh_token }}
         REPO: ${{ github.repository }}
