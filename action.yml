@@ -31,7 +31,13 @@ runs:
       shell: bash
       run: |
         echo "Queueing PR #$PR in $REPO"
-        case $REPO in
-          pgollucci/) gh pr merge --merge -R "$REPO" "$PR" ;;
-          *) gh pr merge -R "$REPO" "$PR" ;;
-        esac
+        for strategy in squash rebase merge; do
+          if gh pr merge --auto "--$strategy" -R "$REPO" "$PR"; then
+            echo "Queued with strategy: $strategy"
+            exit 0
+          fi
+          echo "Strategy $strategy failed; trying next"
+        done
+
+        echo "Failed to queue PR #$PR in $REPO with any supported strategy" >&2
+        exit 1
