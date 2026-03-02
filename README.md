@@ -11,4 +11,3 @@
         with:
           gh_token: ${{ secrets.GITHUB_TOKEN }}
 ```
-
