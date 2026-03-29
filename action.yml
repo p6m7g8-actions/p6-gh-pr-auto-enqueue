@@ -31,4 +31,6 @@ runs:
       shell: bash
       run: |
         echo "Queueing PR #$PR in $REPO"
-        gh pr merge --auto --squash -R "$REPO" "$PR"
+        NODE_ID=$(gh api graphql -f query='query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){id}}}' -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR" --jq '.data.repository.pullRequest.id')
+        echo "PR node ID: $NODE_ID"
+        gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id position}}}' -F id="$NODE_ID"
