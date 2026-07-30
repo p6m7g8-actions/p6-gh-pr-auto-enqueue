@@ -30,7 +30,101 @@ runs:
         PR: ${{ steps.pr.outputs.pr }}
       shell: bash
       run: |
-        echo "Queueing PR #$PR in $REPO"
-        NODE_ID=$(gh api graphql -f query='query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){id}}}' -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR" --jq '.data.repository.pullRequest.id')
-        echo "PR node ID: $NODE_ID"
-        gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id position}}}' -F id="$NODE_ID"
+        # Enqueue exactly one PR into the repository's default merge queue.
+        #
+        # Outcome classification (the run output always states which branch was taken):
+        #   enqueued - the mutation succeeded
+        #   skipped  - benign race: already queued, already merged, or no longer open
+        #   retried  - transient gate (required status failing/pending, or approval
+        #              missing); retried with bounded in-run backoff, then failed red
+        #   failed   - no merge queue configured, or any other error
+        #
+        # Benign outcomes are deliberately narrow. Auto-enqueue fires once per Build
+        # `workflow_run` completion and there is no retry trigger, so swallowing every
+        # failure would silently strand a PR outside the queue forever.
+        echo "Queueing PR #${PR} in ${REPO}"
+
+        # matches <haystack> <needle>... -> 0 if any needle is a substring
+        matches() {
+          local hay="$1"
+          shift
+          local needle
+          for needle in "$@"; do
+            if [[ "${hay}" == *"${needle}"* ]]; then
+              return 0
+            fi
+          done
+          return 1
+        }
+
+        owner="${REPO%%/*}"
+        name="${REPO##*/}"
+
+        node_id=$(gh api graphql \
+          -f query='query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){id}}}' \
+          -F owner="${owner}" -F name="${name}" -F pr="${PR}" \
+          --jq '.data.repository.pullRequest.id')
+
+        if [ -z "${node_id}" ]; then
+          echo "::error::RESULT: failed - could not resolve a pull request node id for ${REPO}#${PR}"
+          exit 1
+        fi
+        echo "PR node ID: ${node_id}"
+
+        mutation='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id position}}}'
+
+        max_attempts=3
+        attempt=1
+
+        while true; do
+          echo "Enqueue attempt ${attempt}/${max_attempts} for ${REPO}#${PR}"
+
+          if out=$(gh api graphql -f query="${mutation}" -F id="${node_id}" 2>&1); then
+            echo "${out}"
+            echo "RESULT: enqueued - ${REPO}#${PR} is in the merge queue"
+            exit 0
+          fi
+
+          echo "${out}"
+          lower=$(printf '%s' "${out}" | tr '[:upper:]' '[:lower:]')
+
+          # No merge queue rule on this repository/base branch. Several repos in the
+          # fleet genuinely have no queue; say so plainly instead of dumping GraphQL.
+          if matches "${lower}" \
+            "merge queue is not enabled" "merge queue not enabled" \
+            "merge queue is disabled" "does not have a merge queue" \
+            "no merge queue" "merge queue is not configured"; then
+            hint="Add a merge queue rule for that branch, or drop this step"
+            echo "::error::RESULT: failed - ${REPO} has no merge queue for the base branch of #${PR}. ${hint}"
+            exit 1
+          fi
+
+          # Benign races: another run, a human, or the queue itself already handled it.
+          if matches "${lower}" \
+            "already queued" "already in the merge queue" "already enqueued" \
+            "already been merged" "already merged" "not open" "is closed"; then
+            echo "RESULT: skipped - ${REPO}#${PR} is already queued, merged, or closed"
+            exit 0
+          fi
+
+          # Transient: a required check or approval had not settled yet when the Build
+          # workflow_run fired. Back off inside this step, bounded, then fail red.
+          if matches "${lower}" \
+            "required status" "status check" "checks are pending" \
+            "approving review" "review required" "not approved" \
+            "required review"; then
+            if [ "${attempt}" -ge "${max_attempts}" ]; then
+              echo "::error::RESULT: failed - ${REPO}#${PR} not enqueued after ${max_attempts} attempts"
+              echo "::error::A required status check or approval is not satisfied"
+              exit 1
+            fi
+            delay=$(( attempt * 10 ))
+            attempt=$(( attempt + 1 ))
+            echo "RESULT: retried - transient gate on ${REPO}#${PR}; ${delay}s then attempt ${attempt}"
+            sleep "${delay}"
+            continue
+          fi
+
+          echo "::error::RESULT: failed - unexpected error enqueuing ${REPO}#${PR}"
+          exit 1
+        done
